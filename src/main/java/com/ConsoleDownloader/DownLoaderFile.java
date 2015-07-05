@@ -1,6 +1,7 @@
 package com.ConsoleDownloader;
 
 import java.util.*;
+import java.nio.channels.FileChannel;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
@@ -29,7 +30,7 @@ class DownLoaderFiles implements Runnable {
 		this.maxSpeed = maxSpeed;
 		totalDownloaded = 0;
 		multiThread = false;
-		thrd = new Thread(this, "DownLoaderFiles");
+		thrd = new Thread(this);
 		thrd.start();
 	}
 	
@@ -84,7 +85,16 @@ class DownLoaderFiles implements Runnable {
 		int count = (int) Math.ceil((float)contentLength / BLOCK_SIZE);
 		if (count > countThreads) 
 			count = countThreads;
+		if (!multiThread)
+			count =1;
 		return count;
+	}
+	
+	private long calculateSizeOfPart(long contentLength, int curCountThreads) {
+		if (multiThread)
+			return (long)Math.ceil((float)contentLength / curCountThreads);
+		else
+			return contentLength;
 	}
 	
 	/**
@@ -93,52 +103,64 @@ class DownLoaderFiles implements Runnable {
 	public void run() {
 		for(Map.Entry<String, List<String>> entry: mapFiles.entrySet()) {
 			System.out.println("Link " + entry.getKey());
-			List<DownloadThread> listThreads = new ArrayList<DownloadThread>();
-			long contentLength = checkUrl(entry.getKey());
-			if (contentLength > 0) {											//файл доступен
-				long curCountThreads;
-				long partSize;
-				if (multiThread) {												//Многопоточная загрузка						
-					curCountThreads = calculateCountThreads(contentLength);
-					partSize = (long)Math.ceil((float)contentLength / curCountThreads);				
-					
-				} else {
-					curCountThreads = 1;
-					partSize = contentLength;
-				}
-				System.out.println(entry.getKey() + " countThreads=" + curCountThreads + " part_size=" + partSize);
-				
-				//Устанавливаем настройки для потоков, качающих файл по текущем url
-				DownloadThread.url = url;
-				DownloadThread.fileName = entry.getValue();
-				DownloadThread.outFolder = outFolder;
-				DownloadThread.block_size = BLOCK_SIZE;
-				DownloadThread.maxSpeed = maxSpeed;
-				DownloadThread.countThreads = countThreads;
-				DownloadThread.speed = maxSpeed / countThreads;
-				
-				//Создаем потоки, указывая им необходимый диапазон загрузки файла
-				for(int i=0; i < curCountThreads; i++) {
-					long startByte = i*partSize;
-					long endByte = (i+1)*partSize - 1;
-					//System.out.println("Start=" + startByte + " endByte=" + endByte);
-					listThreads.add(new DownloadThread(startByte, endByte));
-				}
-				
-				//Ждем завершения каждого потока
-				for(DownloadThread dThread: listThreads) {					
-					try {
-						dThread.thrd.join();
-					} catch (InterruptedException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
-					totalDownloaded += dThread.downloaded;		//Запоминаем сколько скачал байт
-				}
-				System.out.println(entry.getKey() + " download finished.");
-			}
+			createThreads(entry.getKey(), entry.getValue());
+			saveOtherNames(entry.getValue());
 		}
 	}
+	
+	private void createThreads(String strUrl, List<String> listOfNames) {
+		long contentLength = checkUrl(strUrl);
+		if (contentLength  < 0)
+			return;
+			
+		int curCountThreads = calculateCountThreads(contentLength);
+		long partSize = calculateSizeOfPart(contentLength, curCountThreads);	
+		System.out.println(strUrl + " countThreads=" + curCountThreads + " part_size=" + partSize);		
+		
+		//Устанавливаем настройки для потоков, качающих файл по текущем url
+		DownloadThread.url = url;
+		DownloadThread.fileName = listOfNames.get(0);
+		DownloadThread.outFolder = outFolder;
+		DownloadThread.block_size = BLOCK_SIZE;
+		DownloadThread.maxSpeed = maxSpeed;
+		DownloadThread.countThreads = curCountThreads;
+		DownloadThread.speed = maxSpeed / countThreads;
+		
+		//Создаем потоки, указывая им необходимый диапазон загрузки файла
+		List<DownloadThread> listThreads = new ArrayList<DownloadThread>();
+		for(int i=0; i < curCountThreads; i++) {
+			long startByte = i*partSize;
+			long endByte = (i+1)*partSize - 1;
+			//System.out.println("Start=" + startByte + " endByte=" + endByte);
+			listThreads.add(new DownloadThread(startByte, endByte));
+		}
+		
+		//Ждем завершения каждого потока
+		for(DownloadThread dThread: listThreads) {					
+			try {
+				dThread.thrd.join();
+			} catch (InterruptedException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			totalDownloaded += dThread.downloaded;		//Запоминаем сколько скачал байт
+		}
+		System.out.println(strUrl + " download finished.");
+	}
+
+	private void saveOtherNames(List<String> listOfNames) {
+		for(int i=1; i <listOfNames.size(); i++)
+			try {
+		        FileChannel srcChannel = new FileInputStream(outFolder + "/" + listOfNames.get(0)).getChannel();
+		        FileChannel dstChannel = new FileOutputStream(outFolder + "/" + listOfNames.get(i)).getChannel();
+		        dstChannel.transferFrom(srcChannel, 0, srcChannel.size());
+		        srcChannel.close();
+		        dstChannel.close();
+		        System.out.println(listOfNames.get(i) + " is saved.");
+		    } catch (IOException e) {
+		    	System.out.println("Error copy " + outFolder + "/" + listOfNames.get(i) + ". " + e);
+		    }	
+	}	
 }
 
 	/**
@@ -146,12 +168,12 @@ class DownLoaderFiles implements Runnable {
 	*/
 	class DownloadThread implements Runnable {
 		public static URL url;									//url
-		public static List<String> fileName;					//Список имен, для сохранения файла
+		public static String fileName;							//Имя для сохранения файла
 		public static String outFolder;							//Каталог для сохранения
 		public static int block_size;							//Размер блока данных, для единичной загрузки
 		public static long maxSpeed;							//Максимальная скорость
-		public static long speed;								//Скорость каждого потока, меняется от кол-ва потоков
-		public static long countThreads;						//Кол-во потоков
+		public static volatile long speed;						//Скорость каждого потока, меняется от кол-ва потоков
+		public static volatile long countThreads;				//Кол-во потоков
 		
 		public long downloaded;									//Кол-во байт загруженное потоком
 		private long startByte;									//Номер байта, с которого начинается закачка
@@ -167,7 +189,7 @@ class DownLoaderFiles implements Runnable {
 
 		public void run() {
 			BufferedInputStream in = null;
-			List<RandomAccessFile> listRAF = new ArrayList<RandomAccessFile>();
+			RandomAccessFile raf= null;
 
 			try {
 				HttpURLConnection conn = (HttpURLConnection)url.openConnection(); 			//Открываем соединение
@@ -180,12 +202,9 @@ class DownLoaderFiles implements Runnable {
 				}
 				
 				in = new BufferedInputStream(conn.getInputStream());
-				//Для каждого имени в списке, открываем файл на запись и выставлем указатель на нужное место в файле
-				for(String file: fileName) {
-					RandomAccessFile raf = new RandomAccessFile(outFolder + "/" + file, "rw");
-					listRAF.add(raf);
-					raf.seek(startByte);
-				}
+				raf = new RandomAccessFile(outFolder + "/" + fileName, "rw");
+				raf.seek(startByte);
+					
 				byte data[] = new byte[block_size];
 				int numRead = 0;
 				long timeStart= System.currentTimeMillis();
@@ -193,8 +212,7 @@ class DownLoaderFiles implements Runnable {
 				long leftBytes = speed;									//Оставшееся кол-во байт за данную секунду
 				while((numRead = in.read(data, 0, block_size)) != -1 )
 				{
-					for(RandomAccessFile raf: listRAF)					//Записываем в файлы
-						raf.write(data,0,numRead);
+					raf.write(data,0,numRead);
 					downloaded += numRead;								//Обновляем кол-во загруженных байт
 					leftBytes -= numRead;								
 			        if (leftBytes < 1) {								//В данную секунду, загрузили положенное кол-во байт
@@ -214,12 +232,11 @@ class DownLoaderFiles implements Runnable {
 			} catch (IOException e) {
 				System.out.println("Error " + e);
 			} finally {
-				for (RandomAccessFile raf: listRAF)						//Закрываем все файлы
-					try {
-						raf.close();
-					} catch (IOException e) {
-						System.out.println("Error close " + raf.toString());
-					}
+				try {
+					raf.close();
+				} catch (IOException e) {
+					System.out.println("Error close " + raf.toString());
+				}
 				if (in != null) {
 					try {
 					in.close();
@@ -228,7 +245,6 @@ class DownLoaderFiles implements Runnable {
 			countThreads--;												//Кол-во качающих потоков уменшаем
 			if (countThreads > 0)
 				speed = maxSpeed / countThreads;						//Пересчитываем скорость для потока
-			//System.out.println(thrd.toString() + " downloaded " + downloaded);
 		}
 	}
 }

@@ -8,10 +8,10 @@ public class ConsoleDownloader {
 		long timeStart = System.currentTimeMillis();	//Время старта программы
 		long bytes = 0;									//Кол-во байт
 	
-		Map<String, List<String>> listFiles;	//Для каждого url список имен, для сохранения
-		int countThreads;						//Кол-во потоков
-		long speed;								//Скорость закачки в байтах.
-		String folder;							//Каталог для сохранения		
+		Map<String, List<String>> listFiles;			//Для каждого url список имен, для сохранения
+		int countThreads;								//Кол-во потоков
+		long speed;										//Скорость закачки в байтах.
+		String folder;									//Каталог для сохранения		
 		
 		//Анализ принятых параметров
 		try {

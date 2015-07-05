@@ -122,7 +122,7 @@ public class TestAnalyzeParameters {
 	@After
 	public void tearParameters() {
 		File file = new File("links.txt");
-		//file.delete();
+		file.delete();
 		file = new File("test");
 		file.delete();
 	}
